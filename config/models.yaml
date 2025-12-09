@@ -1,0 +1,26 @@
+default: llama3.1
+models:
+  llama3.1:
+    provider: huggingface
+    hf_repo: bartowski/Meta-Llama-3.1-8B-Instruct-GGUF
+    allow_patterns: ["*Q4_K_M.gguf"]
+    path: models/llama3.1
+    description: Meta LLaMA 3.1 8B Instruct 4-bit
+  solar-10.7b-instruct:
+    provider: huggingface
+    hf_repo: upstage/SOLAR-10.7B-Instruct-v1.0
+    allow_patterns: ["*Q4_K_M.gguf", "*.json", "*.txt", "*.model"]
+    path: models/solar-10.7b-instruct
+    description: Suno SOLAR-10.7B Instruct 4-bit
+  gemma-3:
+    provider: huggingface
+    hf_repo: google/gemma-3-9b-it
+    allow_patterns: ["*Q4_K_M.gguf", "*.json", "*.txt", "*.model"]
+    path: models/gemma-3
+    description: Google Gemma 3 9B Instruct 4-bit
+  qwen2.5:
+    provider: huggingface
+    hf_repo: Qwen/Qwen2.5-7B-Instruct
+    allow_patterns: ["*Q4_K_M.gguf", "*.json", "*.txt", "*.model"]
+    path: models/qwen2.5
+    description: Qwen 2.5 7B Instruct 4-bit (임시 대체)

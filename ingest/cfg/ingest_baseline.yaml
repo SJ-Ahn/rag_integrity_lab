@@ -1,0 +1,5 @@
+input: data/working/normalized/normalized.jsonl
+output_dir: data/working/chunks
+chunk_size: 900
+chunk_overlap: 150
+min_chunk_size: 200

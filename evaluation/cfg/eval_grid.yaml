@@ -1,0 +1,6 @@
+dataset: evaluation/datasets/v2/golden_generated.jsonl
+index_dir: data/index
+top_k: 8
+alpha: 0.65
+faiss_top_k: 50
+model: llama3.1

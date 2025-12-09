@@ -1,0 +1,26 @@
+[
+  {
+    "Recall@8": 93.33,
+    "CitationAccuracy": 66.67,
+    "LatencyP95ms": 552.57,
+    "Model": "llama3.1",
+    "Reranker": "BAAI/bge-reranker-base",
+    "Rerank_Top_K": 50
+  },
+  {
+    "Recall@8": 93.33,
+    "CitationAccuracy": 70.0,
+    "LatencyP95ms": 1021.6,
+    "Model": "llama3.1",
+    "Reranker": "BAAI/bge-reranker-base",
+    "Rerank_Top_K": 100
+  },
+  {
+    "Recall@8": 93.33,
+    "CitationAccuracy": 66.67,
+    "LatencyP95ms": 1988.71,
+    "Model": "llama3.1",
+    "Reranker": "BAAI/bge-reranker-base",
+    "Rerank_Top_K": 200
+  }
+]

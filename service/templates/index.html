@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>RAG Integrity Lab AI Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Noto+Serif+KR:wght@400;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">RAG Assistant</div>
+        <button class="sidebar-btn" type="button" id="new-chat-btn">
+            <span>+</span> 새로운 대화
+        </button>
+        
+        <div class="history-section">
+            <h4 class="history-header">최근 대화</h4>
+            <ul class="history-list" id="history-list">
+                <!-- History items will be populated by JS -->
+            </ul>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+        <div class="chat-container">
+            <div class="chat-content-width">
+                
+                <!-- Conversation Area -->
+                <div id="conversation" class="conversation" aria-live="polite">
+                    <!-- Welcome Message -->
+                    <div class="message-row">
+                        <div class="avatar ai">
+                            <!-- Abstract Icon (Option 3) -->
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                        </div>
+                        <div class="message-content">
+                            <div class="ai-text">
+                                <p>안녕하세요! <strong>AWS 문서 기반 AI 어시스턴트</strong>입니다.<br>
+                                EC2, RDS, Aurora 등 AWS 서비스에 대해 무엇이든 물어보세요.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Spacer for scroll -->
+                <div style="height: 60px;"></div>
+
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <form id="chat-form" class="input-bar">
+                <button type="button" class="send-btn" title="Upload (Not Implemented)" disabled>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <textarea id="question" name="question" rows="1" placeholder="질문을 입력하세요," required></textarea>
+                <button type="submit" class="send-btn active" title="Send">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" color="#1a73e8"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                </button>
+            </form>
+            <div class="disclaimer">
+                RAG Assistant는 실수를 할 수 있습니다. 중요 정보는 확인이 필요합니다.
+            </div>
+        </div>
+    </main>
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/static/js/app.js" defer></script>
+</body>
+</html>

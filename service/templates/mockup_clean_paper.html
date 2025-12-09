@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>RAG Assistant - Clean Paper</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Noto+Serif+KR:wght@400;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #fdfdfd;
+            --text-primary: #202124;
+            --text-secondary: #5f6368;
+            --accent-color: #1a73e8;
+            --surface-color: #ffffff;
+            --border-color: #dadce0;
+            --shadow-sm: 0 1px 2px rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+            --shadow-md: 0 1px 3px rgba(60,64,67,0.3);
+            --font-serif: 'Noto Serif KR', serif;
+            --font-sans: 'Inter', 'Noto Sans KR', sans-serif;
+        }
+
+        body {
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            line-height: 1.6;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar (Gemini style) */
+        .sidebar {
+            width: 260px;
+            background-color: #f8f9fa;
+            border-right: 1px solid transparent; /* Cleaner look */
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem 1rem;
+            gap: 1rem;
+        }
+
+        .sidebar-brand {
+            font-family: var(--font-sans);
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            padding-left: 0.5rem;
+        }
+
+        .sidebar-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: #d3e3fd;
+            color: #001d35;
+            border-radius: 16px;
+            border: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .sidebar-btn.secondary {
+            background: transparent;
+            color: var(--text-primary);
+        }
+        .sidebar-btn.secondary:hover {
+            background: #e8eaed;
+        }
+
+        /* Main Content */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background: var(--surface-color);
+        }
+
+        .header-mobile {
+            display: none; /* Desktop first for mock */
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem 1rem 120px; /* Bottom padding for input */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .chat-content-width {
+            width: 100%;
+            max-width: 800px; /* Gemini style width */
+            display: flex;
+            flex-direction: column;
+            gap: 2.5rem;
+        }
+
+        /* Messages */
+        .message-row {
+            display: flex;
+            gap: 1rem;
+            width: 100%;
+        }
+
+        .user-row {
+            justify-content: flex-end;
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+        .avatar.ai {
+            background: linear-gradient(135deg, #4285f4, #d96570); /* Gemini gradient hint */
+            color: white;
+            font-size: 0;
+        }
+        .avatar.ai::after {
+            content: "✦";
+            font-size: 18px;
+        }
+
+        .message-content {
+            max-width: 85%;
+        }
+
+        .user-bubble {
+            background-color: #f1f3f4;
+            padding: 0.8rem 1.2rem;
+            border-radius: 20px 20px 4px 20px;
+            font-size: 1rem;
+        }
+
+        .ai-text {
+            font-size: 1rem;
+            color: #374151;
+        }
+
+        .ai-text h1, .ai-text h2, .ai-text h3 {
+            font-family: var(--font-serif);
+            margin-top: 1.5rem;
+            margin-bottom: 0.8rem;
+            color: #202124;
+            font-weight: 600;
+        }
+        .ai-text h2 { font-size: 1.4rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; }
+        .ai-text p { margin-bottom: 1rem; line-height: 1.7; }
+        
+        .ai-text code {
+            background: #f1f3f4;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'Menlo', monospace;
+            font-size: 0.9em;
+            color: #c5221f;
+        }
+
+        /* Citations / References Section */
+        .citation-section {
+            margin-top: 2rem;
+            padding-top: 1rem;
+            border-top: 1px solid #f1f3f4;
+        }
+        
+        .citation-header {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .citation-grid {
+            display: flex;
+            gap: 0.8rem;
+            overflow-x: auto;
+            padding-bottom: 0.5rem;
+        }
+
+        .citation-card {
+            min-width: 240px;
+            max-width: 280px;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .citation-card:hover {
+            box-shadow: var(--shadow-md);
+            border-color: #bdc1c6;
+        }
+
+        .cit-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .cit-badge {
+            background: #e8f0fe;
+            color: #1967d2;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            align-self: flex-start;
+        }
+
+        .cit-preview {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            line-height: 1.4;
+        }
+
+        /* Input Area (Floating) */
+        .input-area {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, #ffffff 30%);
+            padding: 1.5rem 1rem 3rem; /* Extra padding bottom */
+            display: flex;
+            justify-content: center;
+        }
+
+        .input-bar {
+            width: 100%;
+            max-width: 800px;
+            background: #f0f4f9;
+            border-radius: 28px;
+            padding: 0.8rem 1.2rem;
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end; /* Align textarea bottom if creates newline */
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+        .input-bar:focus-within {
+            background: white;
+            box-shadow: 0 1px 6px 0 rgba(32, 33, 36, .28);
+        }
+
+        textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            resize: none;
+            font-family: var(--font-sans);
+            font-size: 1rem;
+            max-height: 150px;
+            padding: 0.2rem 0;
+        }
+        textarea:focus { outline: none; }
+
+        .send-btn {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: var(--text-secondary);
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .send-btn.active { color: var(--accent-color); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-thumb { background: #dadce0; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">RAG Assistant</div>
+        <button class="sidebar-btn" type="button">
+            <span>+</span> 새로운 대화
+        </button>
+        <button class="sidebar-btn secondary" type="button">
+            📋 대화 기록 (History)
+        </button>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+        <div class="chat-container">
+            <div class="chat-content-width">
+                
+                <!-- Welcome Message (Placeholder) -->
+                <div class="message-row">
+                    <div class="avatar ai"></div>
+                    <div class="message-content">
+                        <div class="ai-text">
+                            <p>안녕하세요! <strong>AWS 문서 기반 AI 어시스턴트</strong>입니다.<br>
+                            EC2, RDS, Aurora 등 AWS 서비스에 대해 무엇이든 물어보세요.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- User Message -->
+                <div class="message-row user-row">
+                    <div class="message-content">
+                        <div class="user-bubble">
+                            EC2 T3 인스턴스와 C5 인스턴스의 차이점을 알려줘
+                        </div>
+                    </div>
+                    <div class="avatar" style="background:#ddd">U</div>
+                </div>
+
+                <!-- AI Response -->
+                <div class="message-row">
+                    <div class="avatar ai"></div>
+                    <div class="message-content">
+                        <div class="ai-text">
+                            <h2>EC2 T3 vs C5 인스턴스 비교</h2>
+                            <p>두 인스턴스는 설계 목적과 성능 특성이 크게 다릅니다. 주요 차이점은 <strong>CPU 성능 처리 방식</strong>에 있습니다.</p>
+                            
+                            <h3>1. T3 인스턴스 (Burstable)</h3>
+                            <ul>
+                                <li><strong>목적</strong>: 웹 서버, 개발 환경 등 트래픽이 불규칙한 워크로드.</li>
+                                <li><strong>특징</strong>: 기본 성능(Baseline)을 제공하며, 필요 시 크레딧을 소모하여 성능을 순간적으로 높일 수 있습니다(Bursting).</li>
+                            </ul>
+
+                            <h3>2. C5 인스턴스 (Compute Optimized)</h3>
+                            <ul>
+                                <li><strong>목적</strong>: 배치 처리, 과학적 모델링, 머신러닝 추론 등 고성능 연산.</li>
+                                <li><strong>특징</strong>: 고정된 전용 vCPU 성능을 보장합니다.</li>
+                            </ul>
+                            
+                            <p>자세한 내용은 아래 참조 문서를 확인하세요.</p>
+                        </div>
+
+                        <!-- Citations (Inline Gemini Style) -->
+                        <div class="citation-section">
+                            <div class="citation-header">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                                관련 문서 (3)
+                            </div>
+                            <div class="citation-grid">
+                                <div class="citation-card">
+                                    <div class="cit-title">ec2-types.pdf</div>
+                                    <div class="cit-badge">Page 531</div>
+                                    <div class="cit-preview">범용: M5 | T3 | T4g... 버스텁블 퍼포먼스 인스턴스에 대한 설명...</div>
+                                </div>
+                                <div class="citation-card">
+                                    <div class="cit-title">ec2-types.pdf</div>
+                                    <div class="cit-badge">Page 526</div>
+                                    <div class="cit-preview">컴퓨팅 최적화: C5 | C5d | C6g... 고성능 컴퓨팅 워크로드를 위한...</div>
+                                </div>
+                                <div class="citation-card">
+                                    <div class="cit-title">ec2-ug.pdf</div>
+                                    <div class="cit-badge">Page 12</div>
+                                    <div class="cit-preview">인스턴스 유형 선택 가이드... 워크로드에 따른 적절한 인스턴스 크기...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+                
+                <!-- Spacer for scroll -->
+                <div style="height: 20px;"></div>
+
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+            <div class="input-bar">
+                <button type="button" class="send-btn" title="Upload">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+                <textarea rows="1" placeholder="질문을 입력하세요,"></textarea>
+                <button type="button" class="send-btn active" title="Send">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" color="#1a73e8"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                </button>
+            </div>
+            <div style="width:100%; text-align:center; position:absolute; bottom:10px; font-size:0.75rem; color:#9aa0a6;">
+                RAG Assistant는 실수를 할 수 있습니다. 중요 정보는 확인이 필요합니다.
+            </div>
+        </div>
+        <!-- Icon Selection Gallery (For User Review) -->
+        <div style="margin: 3rem auto; max-width: 800px; padding-top: 2rem; border-top: 2px dashed #dadce0;">
+            <h3 style="text-align: center; color: var(--text-secondary);">아이콘 옵션 선택</h3>
+            <div style="display: flex; justify-content: center; gap: 2rem; margin-top: 1.5rem;">
+                
+                <!-- Option 1: Gemini Sparkle (Based on upload) -->
+                <div style="text-align: center;">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #4b90ff, #ff5546); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);">
+                         <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M12 2L14.4 9.6L22 12L14.4 14.4L12 22L9.6 14.4L2 12L9.6 9.6L12 2Z"/></svg>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; font-weight: 500;">Option 1<br>(Gemini Style)</p>
+                </div>
+
+                <!-- Option 2: Minimal Bot -->
+                <div style="text-align: center;">
+                    <div style="width: 48px; height: 48px; border-radius: 12px; background: #e8f0fe; display: flex; align-items: center; justify-content: center; color: #1967d2;">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M12,4A8,8 0 0,0 4,12C4,14.36 5.03,16.47 6.67,17.88C7.53,16.7 8.5,15.82 9.58,15.25L9.5,15C9.5,13.25 10.15,11.75 11.19,10.63C9.92,9.85 9,8.5 9,7H15C15,8.5 14.08,9.85 12.81,10.63C13.85,11.75 14.5,13.25 14.5,15L14.42,15.25C15.5,15.82 16.47,16.7 17.33,17.88C18.97,16.47 20,14.36 20,12A8,8 0 0,0 12,4Z"/></svg>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; font-weight: 500;">Option 2<br>(Minimal Bot)</p>
+                </div>
+
+                <!-- Option 3: Abstract Neural -->
+                <div style="text-align: center;">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: #202124; display: flex; align-items: center; justify-content: center; color: white;">
+                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    </div>
+                    <p style="margin-top: 0.5rem; font-size: 0.9rem; font-weight: 500;">Option 3<br>(Abstract)</p>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+</body>
+</html>

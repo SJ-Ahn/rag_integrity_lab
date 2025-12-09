@@ -1,0 +1,6 @@
+{
+  "Recall@8": 73.33,
+  "CitationAccuracy": 20.0,
+  "LatencyP95ms": 176.3,
+  "Model": "llama3.1"
+}

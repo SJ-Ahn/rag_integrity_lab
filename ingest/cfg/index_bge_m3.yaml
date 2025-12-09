@@ -1,0 +1,11 @@
+chunk_glob: data/working/chunks/*.jsonl
+index_dir: data/index
+embedding_model: BAAI/bge-m3
+batch_size: 8
+faiss:
+  m: 32
+  ef_search: 128
+  ef_construction: 200
+bm25:
+  k1: 1.6
+  b: 0.75
