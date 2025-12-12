@@ -1,5 +1,9 @@
 import pathlib
+import os
+from dotenv import load_dotenv
 from dataclasses import dataclass
+
+load_dotenv()
 
 @dataclass
 class Settings:
@@ -29,5 +33,16 @@ class Settings:
 
     # LLM
     LLM_CONTEXT_WINDOW: int = 16384
+    LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "local")  # "local", "openai", "gemini"
+    
+    # Local LLM Specific
+    LOCAL_MODEL_PATH: str = "models/llama3.1/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+    
+    # External LLM Specific
+    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
+    
+    OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4-turbo-preview")
+    GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-pro")
 
 settings = Settings()

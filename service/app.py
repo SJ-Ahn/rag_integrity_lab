@@ -34,10 +34,7 @@ except ImportError:  # pragma: no cover
     SentenceTransformer = None  # type: ignore
     CrossEncoder = None  # type: ignore
 
-try:
-    from llama_cpp import Llama  # type: ignore
-except ImportError:  # pragma: no cover
-    Llama = None  # type: ignore
+
 
 # ... imports ... (imports section needs careful handling if I replace a block)
 # Actually, I will replace the try-except block for sentence_transformers first, then the HybridRetriever class modification.
@@ -97,6 +94,8 @@ class AskResponse(BaseModel):
     answer_ko: str
     citations: List[Citation]
     latency_ms: float
+    provider: str
+
 
 
 class ChunkStore:
@@ -290,154 +289,12 @@ class HybridRetriever:
         return self.chunks.get_doc(chunk_id), self.chunks.get_text(chunk_id)
 
 
-class LLMService:
-    def __init__(self, model_path: str, n_ctx: int = settings.LLM_CONTEXT_WINDOW):
-        if Llama is None:
-            raise RuntimeError("llama-cpp-python is not installed.")
-        
-        self.n_ctx = n_ctx
-        chunk_model_path = pathlib.Path(model_path)
-        # Search for GGUF file if directory is given
-        if chunk_model_path.is_dir():
-            gguf_files = list(chunk_model_path.rglob("*.gguf"))
-            if not gguf_files:
-                raise FileNotFoundError(f"No GGUF file found in {model_path}")
-            model_file = str(gguf_files[0])
-        else:
-            model_file = model_path
-            
-        LOGGER.info(f"Loading LLM from {model_file} (n_ctx={self.n_ctx}, n_gpu_layers=-1)")
-        self.llm = Llama(
-            model_path=model_file,
-            n_ctx=self.n_ctx,
-            n_gpu_layers=-1,  # Offload all layers to GPU if possible
-            verbose=False
-        )
+from service.llm_factory import get_llm_service
+from service.llm_base import BaseLLMService
+from service.router import ChatRouter
 
-    def _manage_history(self, system_prompt: str, user_message: str, history: list) -> list:
-        """
-        Calculates expected tokens and truncates history if it exceeds context window.
-        Prioritizes user_message + system_prompt, then fits as much history as possible.
-        """
-        # Safety buffer (for response generation)
-        SAFETY_BUFFER = 2000
-        MAX_INPUT_TOKENS = self.n_ctx - SAFETY_BUFFER
-        
-        if not history:
-             return []
-
-        # Use len(text)//4 as a fast approximation if real tokenizer is heavy, 
-        # but Llama.tokenize is fast enough usually.
-        def count_tokens(text: str) -> int:
-             try:
-                 return len(self.llm.tokenize(text.encode("utf-8", errors="ignore")))
-             except Exception:
-                 return len(text) // 3 # Fallback conservative estimate
-
-        sys_tokens = count_tokens(system_prompt)
-        user_tokens = count_tokens(user_message)
-        
-        needed = sys_tokens + user_tokens
-        limit_for_history = MAX_INPUT_TOKENS - needed
-        
-        if limit_for_history <= 0:
-            return [] # No space for history
-            
-        # Add history messages from newest to oldest until limit reached
-        # But history list is usually Oldest -> Newest.
-        # So we iterate backwards.
-        
-        selected_history = []
-        current_history_tokens = 0
-        
-        for msg in reversed(history):
-            msg_tokens = count_tokens(msg.get("content", ""))
-            if current_history_tokens + msg_tokens > limit_for_history:
-                break
-            selected_history.insert(0, msg)
-            current_history_tokens += msg_tokens
-            
-        return selected_history
-
-    def generate_answer(self, query: str, context_chunks: list[dict], history: list = []) -> str:
-        # Build Context with optimized truncation (limit characters approx 10k ~ 3k tokens)
-        context_text = ""
-        total_len = 0
-        limit = 10000 
-        
-        # Use only top 5 chunks for generation to save time
-        for idx, chunk in enumerate(context_chunks[:5], start=1):
-            text = chunk['text']
-            if total_len + len(text) > limit:
-                break
-            context_text += f"[{idx}] {text}\n\n"
-            total_len += len(text)
-        
-        system_prompt = (
-            "당신은 구글의 'Gemini'와 같은 고성능 AI 어시스턴트입니다."
-            "누구인지 물어거나 자기소개할때는 AWS 기술 어시스턴트라고 소개해주세요."
-            "주어진 [Context]를 바탕으로 질문에 대해 풍부하고 구조적인 답변을 제공하세요.\n\n"
-            "**답변 스타일 가이드 (Gemini Style):**\n"
-            "1. **전문적이고 포괄적인 구조**: 답변은 '서론(요약) -> 본론(상세 설명) -> 결론(추가 제안)'의 흐름을 갖추세요.\n"
-            "2. **구조화된 서식 활용**: 가독성을 높이기 위해 적절한 **헤더(###)**, **글머리 기호(•)**, **번호 매기기**, **굵은 글씨**를 적극적으로 사용하세요.\n"
-            "3. **충실한 분량**: 너무 짧게 줄이지 말고, 사용자가 충분히 이해할 수 있도록 상세한 뉘앙스와 맥락을 설명하세요.\n"
-            "4. **명확한 근거 표기**: [Context]의 내용을 인용할 때는 문장이나 단락 끝에 반드시 `[1]`, `[2]`와 같이 출처 번호를 명시하세요.\n"
-            "5. **소개 및 마무리**: 시작할 때 사용자의 질문을 이해했음을 부드럽게 표현하고, 끝맺음 말로 도움이 더 필요한지 물어보세요.\n"
-            "6. **톤앤매너**: 자신감 있고 친절하며 전문적인 '해요체'를 사용하세요."
-        )
-        
-        user_message = f"""[Context]
-{context_text}
-
-[Question]
-{query}
-
-[Answer]
-"""
-        # Truncate history based on context window
-        managed_history = self._manage_history(system_prompt, user_message, history)
-        
-        # Construct messages
-        messages = [{"role": "system", "content": system_prompt}]
-        for msg in managed_history:
-             # Ensure only valid roles are passed
-             role = msg.get("role", "user")
-             if role not in ["user", "assistant"]:
-                 role = "user"
-             messages.append({"role": role, "content": msg.get("content", "")})
-             
-        messages.append({"role": "user", "content": user_message})
-        
-        response = self.llm.create_chat_completion(
-            messages=messages,
-            temperature=0.1,
-            max_tokens=0
-        )
-        
-        return response["choices"][0]["message"]["content"]
-
-
-@lru_cache(maxsize=1)
-def get_llm_service() -> Optional[LLMService]:
-    # Try to find the model path from config
-    model_info = get_model_info("llama3.1")
-    model_path = pathlib.Path(str(model_info.get("path", "models/llama3.1")))
-    
-    if not model_path.exists():
-        LOGGER.warning(f"LLM model path {model_path} does not exist. Generic answers disabled.")
-        return None
-        
-    try:
-        # Check if any GGUF exists
-        if hasattr(model_path, "rglob") and not list(model_path.rglob("*.gguf")):
-             LOGGER.warning(f"No GGUF files found in {model_path}. Generic answers disabled.")
-             return None
-             
-        service = LLMService(str(model_path))
-        return service
-    except Exception as e:
-        LOGGER.error(f"Failed to initialize LLM: {e}")
-        return None
+# Initialize Router
+chat_router = ChatRouter()
 
 
 def _map_doc_id_to_url(doc_id: str) -> str:
@@ -481,7 +338,7 @@ def format_answer(query: str, retrievals: list[tuple[str, float]], store: ChunkS
 
 # ... (skipping HybridRetriever unchanged) ...
 
-def generate_answer_with_llm(query: str, retrievals: list[tuple[str, float]], store: ChunkStore, llm: LLMService, history: list = []) -> tuple[str, List[Citation]]:
+def generate_answer_with_llm(query: str, retrievals: list[tuple[str, float]], store: ChunkStore, llm: BaseLLMService, history: list = []) -> tuple[str, List[Citation]]:
     if not retrievals:
         return ("관련된 문서를 찾을 수 없어 답변을 생성할 수 없습니다.", [])
 
@@ -562,12 +419,18 @@ def startup_event() -> None:
     setup_logger("service.http", settings.LOG_DIR / "http/service.log")
     setup_logger("service.qa", settings.LOG_DIR / "qa/service.log")
     setup_logger("service.latency", settings.LOG_DIR / "latency/service.log")
-    model_info = get_model_info()
-    LOGGER.info(
-        "서비스 기본 LLM 설정: %s (%s)",
-        DEFAULT_MODEL_NAME,
-        json.dumps(model_info, ensure_ascii=False),
-    )
+    setup_logger("service.latency", settings.LOG_DIR / "latency/service.log")
+    
+    provider = settings.LLM_PROVIDER.upper()
+    LOGGER.info(f"🚀 서비스 시작! 현재 활성화된 LLM Provider: {provider}")
+
+    if provider == "LOCAL":
+        model_info = get_model_info()
+        LOGGER.info(
+            "로컬 모델 정보: %s (%s)",
+            DEFAULT_MODEL_NAME,
+            json.dumps(model_info, ensure_ascii=False),
+        )
     try:
         get_retriever()
     except Exception as exc:  # pragma: no cover - fail-fast visibility
@@ -586,46 +449,10 @@ def mockup(request: Request):
     return templates.TemplateResponse("mockup_clean_paper.html", {"request": request})
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(request: AskRequest) -> AskResponse:
-    start = time.perf_counter()
-    try:
-        retriever = get_retriever()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Retriever unavailable: {exc}") from exc
-    try:
-        retrievals = retriever.retrieve(request.query_ko, top_k=request.top_k)
-        
-        # Try to use LLM first
-        llm = get_llm_service()
-        if llm:
-            answer, citations = generate_answer_with_llm(request.query_ko, retrievals, retriever.chunks, llm, request.history)
-        else:
-            answer, citations = format_answer(request.query_ko, retrievals, retriever.chunks)
-            
-        QA_LOGGER.info(
-            json.dumps(
-                {
-                    "query": request.query_ko,
-                    "top_k": request.top_k,
-                    "citations": [citation.dict() for citation in citations],
-                    "answer": answer,
-                },
-                ensure_ascii=False,
-            )
-        )
-    except Exception as exc:
-        LOGGER.exception("Failed to answer query: %s", request.query_ko)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    latency_ms = (time.perf_counter() - start) * 1000
-    return AskResponse(answer_ko=answer, citations=citations, latency_ms=latency_ms)
-
-
-# --- Web UI Integration ---
+# --- Web UI Integration & Route Handlers ---
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
+# templates is already defined above, but we ensure static files are mounted
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 if settings.DATA_SOURCE_DIR.exists():
     app.mount("/docs", StaticFiles(directory=str(settings.DATA_SOURCE_DIR)), name="docs")
@@ -641,13 +468,80 @@ class ChatRequest(BaseModel):
     history: list = []
 
 
+@app.post("/ask", response_model=AskResponse)
+def ask(request: AskRequest) -> AskResponse:
+    start = time.perf_counter()
+    try:
+        retriever = get_retriever()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Retriever unavailable: {exc}") from exc
+    try:
+        retrievals = retriever.retrieve(request.query_ko, top_k=request.top_k)
+        
+        # [Hotfix] Filter out garbage chunks (e.g. SSL Certificates) that cause token overflow
+        filtered_retrievals = []
+        for chunk_id, score in retrievals:
+            # ChunkStore has .get_text(), not .get()
+            chunk_text = retriever.chunks.get_text(chunk_id)
+            if "BEGIN CERTIFICATE" in chunk_text or "END CERTIFICATE" in chunk_text:
+                LOGGER.warning(f"Filtered out content chunk {chunk_id} due to CERTIFICATE content.")
+                continue
+            if len(chunk_text) > 5000: # Limit single chunk size to 5000 chars safely
+                 LOGGER.warning(f"Filtered out content chunk {chunk_id} due to excessive length ({len(chunk_text)} chars).")
+                 continue
+            filtered_retrievals.append((chunk_id, score))
+            
+        retrievals = filtered_retrievals
+        
+        # Try to use LLM first
+        llm = get_llm_service()
+        if llm:
+            answer, citations = generate_answer_with_llm(request.query_ko, retrievals, retriever.chunks, llm, request.history)
+        else:
+            answer, citations = format_answer(request.query_ko, retrievals, retriever.chunks)
+            
+        provider = settings.LLM_PROVIDER
+        QA_LOGGER.info(
+            json.dumps(
+                {
+                    "query": request.query_ko,
+                    "provider": provider,
+                    "top_k": request.top_k,
+                    "citations": [citation.dict() for citation in citations],
+                    "answer": answer,
+                },
+                ensure_ascii=False,
+            )
+        )
+    except Exception as exc:
+        LOGGER.exception("Failed to answer query: %s", request.query_ko)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    latency_ms = (time.perf_counter() - start) * 1000
+    return AskResponse(answer_ko=answer, citations=citations, latency_ms=latency_ms, provider=provider)
+
+
 @app.post("/api/chat")
 async def chat_endpoint(payload: ChatRequest):
-    # Reuse the logic from ask()
     try:
+        # 1. Intelligent Routing (Rule + LLM)
+        decision = chat_router.route(payload.question)
+        
+        # 2. Handle Chit-chat immediately with strict separation
+        if decision.intent == "chitchat":
+            # If the router optimized and provided a response, use it.
+            # Otherwise we could have a handler here generate it.
+            # As per plan, we use the direct_response if valid.
+            answer = decision.direct_response if decision.direct_response else "안녕하세요."
+            
+            return {
+                "answer": answer,
+                "provider": f"router (chitchat, conf={decision.confidence})",
+                "sources": []
+            }
+            
+        # 3. Handle Technical Query (RAG)
+        # Reuse the logic from ask()
         ask_req = AskRequest(query_ko=payload.question, top_k=settings.RETURN_TOP_K, history=payload.history)
-        # Call the existing ask function logic directly
-        # Note: ask() returns AskResponse model.
         response = ask(ask_req)
         
         sources = []
@@ -663,11 +557,16 @@ async def chat_endpoint(payload: ChatRequest):
             
         return {
             "answer": response.answer_ko,
+            "provider": response.provider,
             "sources": sources
         }
+
     except Exception as e:
         LOGGER.exception("Chat endpoint error")
         return {
             "answer": f"오류가 발생했습니다: {str(e)}",
             "sources": []
         }
+
+
+
