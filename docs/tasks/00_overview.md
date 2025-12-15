@@ -1,29 +1,26 @@
-# rag_integrity_lab 개요
+# RAG Integrity Lab 개요
 
 ## 프로젝트 목적
-동일한 AWS EC2 및 DBMS 문서 세트를 기반으로 RAG 파이프라인의 질문·답변·출처 매핑의 정확도를 반복 검증하고 정량화합니다.
+AWS EC2 문서 기반의 RAG(Retrieval-Augmented Generation) 시스템을 구축하고, **로컬(GPU) 및 서버리스(API)** 환경 모두에서 동작하는 하이브리드 파이프라인을 검증합니다.
 
-## 핵심 목표
-- **정확성(Accuracy):** 질문-답변-인용 일치율 92% 이상
-- **근거 충실성(Faithfulness):** 원문 대비 일치율 85% 이상
-- **재현성(Reproducibility):** 동일 조건에서 결과 동일
-- **자동 평가(Automation):** CI 파이프라인으로 테스트 반복 가능
+## 핵심 기능 (Phase 4 완료)
+- **Dual Indexing**: 로컬(`BAAI/bge-m3`)과 서버리스(`OpenAI/text-embedding-3-small`) 환경에 맞는 독립적인 벡터 인덱스 운용.
+- **Smart Router**: LLM 기반의 의도 분류(Intent Classification)를 통해 잡담(Chitchat)과 검색질문(Search Query)을 지능적으로 분기.
+- **Hybrid Search**: FAISS(Vector) + BM25(Keyword) + CrossEncoder(Reranking)의 3단계 검색 파이프라인.
+- **Multi-Provider Support**: `Local(Llama-3)`, `OpenAI(GPT-4o)`, `Gemini(Pro)` 간의 유연한 전환 지원.
 
-## 구성 구조
+## 프로젝트 구조
 ```
-
 rag-integrity-lab/
-├── data/             # 원본·전처리 문서
-├── ingest/           # 청크/임베딩 스크립트
-├── service/          # RAG API(FastAPI)
-├── evaluation/       # 평가 세트·채점 스크립트
-├── docs/             # 보고서·실험노트
-├── logs/             # 로그 및 환경정보
-└── tools/            # 유틸리티 스크립트
-
+├── data/             # 원본 문서, 전처리 청크, 인덱스 파일
+├── ingest/           # 청크/임베딩 설정 및 스크립트
+├── service/          # FastAPI 서버, Router, LLM Service Factory
+├── evaluation/       # 정량적 평가 (Accuracy, Faithfulness)
+├── docs/             # 프로젝트 문서 및 태스크 로그
+├── scripts/          # 유틸리티 (인덱스 빌드, 청킹 등)
+└── logs/             # 런타임 로그 (Router, QP, HTTP)
 ```
 
-## 장비 사양
-- RAM: 32GB
-- GPU: RTX 5060 Ti (CUDA 12.8)
-- Python 3.10+, Ubuntu 24.04
+## 시스템 요구사항
+- **Local Mode**: NVIDIA GPU (VRAM 12GB+ 권장), CUDA 12.x
+- **Serverless Mode**: CPU 2 Core, RAM 4GB (GPU 불필요, OpenAI/Gemini API Key 필요)
