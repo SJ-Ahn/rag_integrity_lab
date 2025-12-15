@@ -70,35 +70,51 @@ class ChatRouter:
             LOGGER.warning("LLM Service unavailable for routing. Fallback to Search.")
             return RouteResult(intent="search_query", confidence=0.0)
 
+        # Sanitize query for prompt injection
+        safe_query = query.strip().replace("\n", " ").replace('"', "'") 
+        
         # Prompt engineering for combined Classification + Chitchat Response
+        # Using more explicit "Input/Output" format which works better with Llama-3 completion
         prompt = f"""
-        당신은 AI 라우터입니다. 사용자의 질문을 분석하여 JSON 형식으로 응답하세요.
+        당신은 AI 라우터입니다. 사용자의 질문을 분석하여 오직 JSON 형식으로만 응답하세요. 다른 설명은 하지 마세요.
         
         [규칙]
-        1. 질문이 잡담(인사, 감정, 일반 대화)이면 "intent": "chitchat", "response": "적절한 답변"을 반환하세요.
-        2. 질문이 기술적인 내용(AWS, EC2, 개발, IT)이거나 정보 검색이 필요하면 "intent": "search_query"만 반환하세요.
-        
-        [예시]
-        Q: "안녕"
-        A: {{"intent": "chitchat", "response": "안녕하세요! 무엇을 도와드릴까요?"}}
-        
-        Q: "EC2 인스턴스 어떻게 만들어?"
-        A: {{"intent": "search_query"}}
-        
-        Q: "기분 좋아"
-        A: {{"intent": "chitchat", "response": "다행이네요! 좋은 기운으로 함께 AWS 문제를 해결해봐요!"}}
+    1. 질문이 잡담(인사, 감정, 일반 대화)이거나 **자신의 역할/기능을 묻는 질문**이면 "intent": "chitchat", "response": "적절한 답변"을 반환하세요.
+    2. 질문이 기술적인 내용(AWS, EC2, 개발, IT)이거나 정보 검색이 필요하면 "intent": "search_query"만 반환하세요.
+    
+    [예시]
+    Input: "안녕"
+    Output: {{"intent": "chitchat", "response": "안녕하세요! 무엇을 도와드릴까요?"}}
 
-        Q: "{query}"
-        A: 
+    Input: "너는 누구니?"
+    Output: {{"intent": "chitchat", "response": "저는 AWS 문서를 기반으로 답변해드리는 AI 어시스턴트입니다."}}
+    
+    Input: "EC2 인스턴스 어떻게 만들어?"
+    Output: {{"intent": "search_query"}}
+    
+    Input: "기분 좋아"
+    Output: {{"intent": "chitchat", "response": "다행이네요! 좋은 기운으로 함께 AWS 문제를 해결해봐요!"}}
+
+        Input: "{safe_query}"
+        Output:
         """
         
         try:
-            # Use generate_text for raw prompt execution
-            response_text = llm.generate_text(prompt)
+            # Use generate_text with stop tokens to prevent hallucination of new examples
+            # This is CRITICAL for Local Llama models
+            response_text = llm.generate_text(prompt, stop=["Input:", "Output:", "\n\n", "```"])
             
             # Parse JSON response
-            # Clean up potential markdown code blocks if any
-            cleaned_text = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+            # Improved Extraction: Find text between first '{' and last '}'
+            LOGGER.info(f"Raw Router LLM Output: {response_text}")
+            match = re.search(r'(\{.*\})', response_text, re.DOTALL)
+            if match:
+                cleaned_text = match.group(1)
+            else:
+                # Fallback to simple cleaning if regex fails (e.g. no braces found)
+                cleaned_text = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+            
+            LOGGER.info(f"Cleaned Router Payload: {cleaned_text}")
             data = json.loads(cleaned_text)
             
             intent = data.get("intent", "search_query")

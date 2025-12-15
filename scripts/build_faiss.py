@@ -12,7 +12,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import pathlib
+import numpy as np
+from openai import OpenAI, RateLimitError
+from dotenv import load_dotenv
+import tiktoken
+import time
+
+load_dotenv()
 import pickle
 import platform
 import re
@@ -389,18 +397,87 @@ def encode_chunks(
     model_name: str,
     chunks: list[ChunkRecord],
     batch_size: int,
+    provider: str = "local",
 ):
-    if SentenceTransformer is None:
-        raise RuntimeError(
-            "임베딩 계산을 위해 sentence-transformers 설치가 필요합니다. `uv pip install sentence-transformers`"
-        )
-    model = SentenceTransformer(model_name)
     texts = [chunk.text for chunk in chunks]
-    LOGGER.info("%d개의 청크를 %s 모델로 임베딩합니다", len(texts), model_name)
-    LOGGER.debug("임베딩 배치 크기: %d", batch_size)
-    embeddings = model.encode(texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
-    LOGGER.debug("임베딩 완료. shape=%s", getattr(embeddings, "shape", None))
-    return embeddings
+    LOGGER.info("%d개의 청크를 임베딩합니다 (Provider=%s, Model=%s)", len(texts), provider, model_name)
+    
+    if provider == "openai":
+        if OpenAI is None:
+            raise RuntimeError("OpenAI 패키지가 필요합니다.")
+        # Load API Key from env (managed by settings or os)
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        final_embeddings = []
+        
+        # Prepare Tokenizer for truncation
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+        except:
+             enc = tiktoken.get_encoding("gpt2") # Fallback
+
+        # Batch processing for OpenAI
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            try:
+                # Replace newlines with spaces for best results (recommended by OpenAI)
+                batch = [t.replace("\n", " ") for t in batch]
+                
+                # Truncate to 8191 tokens max
+                safe_batch = []
+                for text in batch:
+                    tokens = enc.encode(text)
+                    if len(tokens) > 8191:
+                        LOGGER.warning("Truncated oversized chunk (%d tokens) to 8191 tokens.", len(tokens))
+                        tokens = tokens[:8191]
+                        text = enc.decode(tokens)
+                    safe_batch.append(text)
+                
+                
+                # Retry loop with exponential backoff
+                max_retries = 5
+                wait_time = 1
+                
+                for attempt in range(max_retries):
+                    try:
+                        resp = client.embeddings.create(input=safe_batch, model=model_name)
+                        break # Success
+                    except RateLimitError as e:
+                        if attempt == max_retries - 1:
+                            LOGGER.error("OpenAI Rate Limit Exceeded after %d retries: %s", max_retries, e)
+                            raise
+                        LOGGER.warning("Rate limit reached. Waiting %d seconds before retry %d/%d...", wait_time, attempt + 1, max_retries)
+                        time.sleep(wait_time)
+                        wait_time *= 2 # Exponential backoff
+                
+                # Sort by index to ensure order
+                data = sorted(resp.data, key=lambda x: x.index)
+                vecs = [d.embedding for d in data]
+                final_embeddings.extend(vecs)
+                
+                # Adaptive sleep based on batch size to respect TPM
+                # 1M TPM / 60 sec = ~16k tokens/sec. 
+                # If batch is ~8k tokens, we can do 2 req/sec.
+                # Adding base latency.
+                time.sleep(0.5) 
+            except Exception as e:
+                LOGGER.error("OpenAI Embedding 실패: %s", e)
+                raise
+        
+        return np.array(final_embeddings, dtype=np.float32)
+
+    elif provider == "local":
+        if SentenceTransformer is None:
+             raise RuntimeError(
+                "임베딩 계산을 위해 sentence-transformers 설치가 필요합니다. `uv pip install sentence-transformers`"
+            )
+        model = SentenceTransformer(model_name)
+        LOGGER.debug("임베딩 배치 크기: %d", batch_size)
+        embeddings = model.encode(texts, batch_size=batch_size, show_progress_bar=True, normalize_embeddings=True)
+        LOGGER.debug("임베딩 완료. shape=%s", getattr(embeddings, "shape", None))
+        return embeddings
+    
+    else:
+        raise ValueError(f"지원하지 않는 Provider입니다: {provider}")
 
 
 def persist_index(
@@ -455,6 +532,7 @@ def run(cfg: dict[str, object]) -> None:
             model_name=str(cfg["embedding_model"]),
             chunks=chunks,
             batch_size=int(cfg["batch_size"]),
+            provider=str(cfg.get("provider", "local")),
         )
 
         dim = embeddings.shape[1]
@@ -486,6 +564,10 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="FAISS + BM25 하이브리드 인덱스를 생성합니다.")
     parser.add_argument("--cfg", help="인덱스 YAML 구성 파일 경로")
     parser.add_argument("--log-level", default="INFO", help="로깅 레벨 설정")
+    parser.add_argument("--provider", help="임베딩 제공자 (local, openai, gemini)")
+    parser.add_argument("--model", help="임베딩 모델 이름 (provider에 맞게 설정)")
+    parser.add_argument("--index-dir", help="출력 인덱스 디렉토리")
+    parser.add_argument("--batch-size", type=int, help="배치 크기")
     return parser.parse_args(argv)
 
 
@@ -498,6 +580,23 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
     configure_logging(args.log_level)
     cfg = load_config(args.cfg)
+    
+    # CLI Overrides
+    if args.provider:
+        cfg["provider"] = args.provider
+    if args.model:
+        cfg["embedding_model"] = args.model
+    if args.index_dir:
+        cfg["index_dir"] = args.index_dir
+    if args.batch_size:
+        cfg["batch_size"] = args.batch_size
+    
+    # Auto-configure index dir if utilizing Strategy 2 conventions
+    if args.provider and not args.index_dir and cfg["index_dir"] == "data/index":
+         cfg["index_dir"] = f"data/index/{args.provider}"
+    
+    LOGGER.info("설정 확인: Provider=%s, Model=%s, Dir=%s", cfg.get("provider"), cfg.get("embedding_model"), cfg.get("index_dir"))
+
     try:
         run(cfg)
     except KeyboardInterrupt:

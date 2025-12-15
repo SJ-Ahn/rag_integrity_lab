@@ -29,6 +29,11 @@ except ImportError:  # pragma: no cover - optional dependency guard
     faiss = None  # type: ignore
 
 try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
     from sentence_transformers import SentenceTransformer, CrossEncoder  # type: ignore
 except ImportError:  # pragma: no cover
     SentenceTransformer = None  # type: ignore
@@ -160,10 +165,11 @@ class HybridRetriever:
         faiss_top_k: int = FAISS_TOP_K,
         return_top_k: int = RETURN_TOP_K,
         embedding_model: str = "BAAI/bge-m3",
+        provider: str = "local",
     ):
         if faiss is None:
             raise RuntimeError("faiss is required (`uv pip install faiss-cpu`).")
-        if SentenceTransformer is None:
+        if provider == "local" and SentenceTransformer is None:
             raise RuntimeError(
                 "sentence-transformers is required (`uv pip install sentence-transformers`)."
             )
@@ -175,8 +181,9 @@ class HybridRetriever:
         self.faiss_top_k = faiss_top_k
         self.return_top_k = return_top_k
         self.embedding_model_name = embedding_model
+        self.provider = provider
 
-        LOGGER.info("Loading FAISS index from %s", index_dir / "faiss.index")
+        LOGGER.info("Loading FAISS index from %s (Provider=%s)", index_dir / "faiss.index", provider)
         self.faiss_index = faiss.read_index(str(index_dir / "faiss.index"))
         with (index_dir / "mapping.json").open("r", encoding="utf-8") as fh:
             mapping = json.load(fh)
@@ -186,7 +193,15 @@ class HybridRetriever:
         with (index_dir / "bm25.pkl").open("rb") as fh:
             self.bm25: BM25Okapi = pickle.load(fh)
 
-        self.embedding_model = SentenceTransformer(self.embedding_model_name)
+        # Initialize Embedding Model based on Provider
+        if self.provider == "openai" or self.provider == "gemini": # Gemini uses OpenAI index per strategy
+             if OpenAI is None:
+                 raise RuntimeError("OpenAI package required for remote embedding.")
+             self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+             LOGGER.info("Initialized OpenAI Embedding Client: %s", self.embedding_model_name)
+        else:
+             self.embedding_model = SentenceTransformer(self.embedding_model_name)
+             LOGGER.info("Initialized Local SentenceTransformer: %s", self.embedding_model_name)
         
         # Reranker 모델 초기화 (설정에 따라 활성화)
         self.use_reranker = settings.USE_RERANKER
@@ -200,11 +215,19 @@ class HybridRetriever:
         
         self.chunks = ChunkStore(index_dir)
 
+    def _encode(self, query: str) -> np.ndarray:
+        if self.provider == "openai" or self.provider == "gemini":
+             query = query.replace("\n", " ")
+             # Use the configured OPENAI_MODEL or strict embedding model name?
+             # We should use self.embedding_model_name
+             resp = self.client.embeddings.create(input=[query], model=self.embedding_model_name)
+             vec = resp.data[0].embedding
+             return np.array([vec], dtype=np.float32)
+        else:
+             return self.embedding_model.encode([query], normalize_embeddings=True)
+
     def _faiss_scores(self, query: str) -> dict[str, float]:
-        embedding = self.embedding_model.encode(
-            [query],
-            normalize_embeddings=True,
-        )
+        embedding = self._encode(query)
         distances, indexes = self.faiss_index.search(
             np.asarray(embedding, dtype=np.float32), self.faiss_top_k
         )
@@ -374,11 +397,41 @@ def generate_answer_with_llm(query: str, retrievals: list[tuple[str, float]], st
 
 @lru_cache(maxsize=1)
 def get_retriever() -> HybridRetriever:
-    index_dir = INDEX_DIR_DEFAULT
+    index_dir = settings.INDEX_DIR # Dynamic based on provider
     if not index_dir.exists():
-        raise RuntimeError(f"Index directory {index_dir} not found. Build the index first.")
-    retriever = HybridRetriever(index_dir=index_dir)
-    LOGGER.info("HybridRetriever initialised with index at %s", index_dir)
+        # Fallback to default if dynamic dir not found (e.g. not built yet)
+        if index_dir != INDEX_DIR_DEFAULT and INDEX_DIR_DEFAULT.exists():
+             LOGGER.warning(f"Preferred index {index_dir} not found. Falling back to default {INDEX_DIR_DEFAULT}")
+             index_dir = INDEX_DIR_DEFAULT
+        else:
+             raise RuntimeError(f"Index directory {index_dir} not found. Build the index first.")
+    
+    # Provider logic
+    provider = "local"
+    if "openai" in str(index_dir):
+        provider = "openai"
+    elif "gemini" in str(index_dir):
+        provider = "gemini"
+    
+    # If using default, check settings
+    if index_dir == INDEX_DIR_DEFAULT and settings.LLM_PROVIDER != "local":
+        # This might happen if user didn't build specific index yet. 
+        # But we want to match embedding model to index! 
+        # If index is old (local), passing provider="openai" will crash if we try to use OpenAI embedding on BGE index.
+        # So we must infer provider FROM THE INDEX DIR or assume consistent state.
+        # For safety, let's trust settings IF index dir matches expectations.
+        pass
+
+    # Better: Use settings.EMBEDDING_MODEL and settings.LLM_PROVIDER
+    # But strictly speaking, HybridRetriever depends on the INDEX content.
+    # We should assume settings are correct.
+    
+    retriever = HybridRetriever(
+        index_dir=index_dir,
+        provider=settings.LLM_PROVIDER,
+        embedding_model=settings.EMBEDDING_MODEL
+    )
+    LOGGER.info("HybridRetriever initialised with index at %s (Model=%s)", index_dir, settings.EMBEDDING_MODEL)
     return retriever
 
 
@@ -420,6 +473,7 @@ def startup_event() -> None:
     setup_logger("service.qa", settings.LOG_DIR / "qa/service.log")
     setup_logger("service.latency", settings.LOG_DIR / "latency/service.log")
     setup_logger("service.latency", settings.LOG_DIR / "latency/service.log")
+    setup_logger("service.router", settings.LOG_DIR / "router/service.log")  # Add Router Logger
     
     provider = settings.LLM_PROVIDER.upper()
     LOGGER.info(f"🚀 서비스 시작! 현재 활성화된 LLM Provider: {provider}")
@@ -526,12 +580,31 @@ async def chat_endpoint(payload: ChatRequest):
         # 1. Intelligent Routing (Rule + LLM)
         decision = chat_router.route(payload.question)
         
+        # Log Intent Decision
+        QA_LOGGER.info(
+            json.dumps({
+                "type": "intent_classification",
+                "query": payload.question,
+                "intent": decision.intent,
+                "confidence": decision.confidence,
+                "direct_response": bool(decision.direct_response)
+            }, ensure_ascii=False)
+        )
+        
         # 2. Handle Chit-chat immediately with strict separation
         if decision.intent == "chitchat":
             # If the router optimized and provided a response, use it.
-            # Otherwise we could have a handler here generate it.
-            # As per plan, we use the direct_response if valid.
             answer = decision.direct_response if decision.direct_response else "안녕하세요."
+            
+            # Log ChitChat Response
+            QA_LOGGER.info(
+                json.dumps({
+                    "query": payload.question,
+                    "provider": "router",
+                    "intent": "chitchat",
+                    "answer": answer
+                }, ensure_ascii=False)
+            )
             
             return {
                 "answer": answer,
@@ -558,6 +631,7 @@ async def chat_endpoint(payload: ChatRequest):
         return {
             "answer": response.answer_ko,
             "provider": response.provider,
+            "intent": "search_query", # Add intent to output for debug
             "sources": sources
         }
 

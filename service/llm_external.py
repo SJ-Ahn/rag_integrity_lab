@@ -72,12 +72,13 @@ class OpenAILLMService(BaseLLMService):
             LOGGER.error(f"OpenAI API Error: {e}")
             raise
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, **kwargs) -> str:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
+                temperature=0.1,
+                stop=kwargs.get("stop")
             )
             content = response.choices[0].message.content
             return content if content else ""
@@ -137,9 +138,13 @@ class GeminiLLMService(BaseLLMService):
             LOGGER.error(f"Gemini API Error: {e}")
             raise
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, **kwargs) -> str:
         try:
-            response = self.model.generate_content(prompt)
+            # Gemini supports stop_sequences in genartion_config
+            generation_config = genai.types.GenerationConfig(
+                stop_sequences=kwargs.get("stop")
+            )
+            response = self.model.generate_content(prompt, generation_config=generation_config)
             return response.text
         except Exception as e:
             LOGGER.error(f"Gemini Text Gen Error: {e}")

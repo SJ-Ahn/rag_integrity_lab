@@ -45,11 +45,12 @@ class LocalLLMService(BaseLLMService):
              LOGGER.error(f"Failed to load model from {model_file}: {e}")
              raise
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, **kwargs) -> str:
         try:
             output = self.llm(
                 prompt,
-                max_tokens=512,
+                max_tokens=kwargs.get("max_tokens", 512),
+                stop=kwargs.get("stop", []),
                 echo=False
             )
             return output["choices"][0]["text"].strip()

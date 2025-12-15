@@ -35,3 +35,4 @@ logs/
 # System
 .DS_Store
 Thumbs.db
+temp_log.json

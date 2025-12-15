@@ -44,5 +44,22 @@ class Settings:
     
     OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4-turbo-preview")
     GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-pro")
+    
+    # Embedding Model (Dynamic)
+    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+
+    def __post_init__(self):
+        # Strategy 2: Dedicated Indexing per Provider
+        if self.INDEX_DIR == pathlib.Path("data/index"):
+            if self.LLM_PROVIDER == "openai":
+                # Ensure the directory exists or will be found
+                self.INDEX_DIR = pathlib.Path("data/index/openai")
+                self.EMBEDDING_MODEL = "text-embedding-3-small"
+            elif self.LLM_PROVIDER == "gemini":
+                self.INDEX_DIR = pathlib.Path("data/index/gemini")
+                self.EMBEDDING_MODEL = "models/embedding-001"
+            else:
+                self.INDEX_DIR = pathlib.Path("data/index/local")
+                self.EMBEDDING_MODEL = "BAAI/bge-m3"
 
 settings = Settings()
